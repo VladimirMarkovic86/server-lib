@@ -133,10 +133,12 @@
                                                (:origin request))
                                         (:origin request))
                                      )
-        default-response-headers (assoc
-                                   default-response-headers
-                                   (rsh/access-control-allow-origin)
-                                   access-control-allow-origin)]
+        default-response-headers (if access-control-allow-origin
+                                   (assoc
+                                     default-response-headers
+                                     (rsh/access-control-allow-origin)
+                                     access-control-allow-origin)
+                                   default-response-headers)]
    (swap!
      response
      update-in
@@ -145,23 +147,36 @@
      default-response-headers)
    (pack-response
      request
-     @response)))
+     @response))
+ )
 
 (defn- accept-request
  ""
  [routing-fn
   client-socket
   default-response-headers]
- (let [input-stream (.getInputStream client-socket)
-       available-bytes (.available input-stream)
-       output-stream (.getOutputStream client-socket)
-       reader-is (java.io.BufferedReader. (java.io.InputStreamReader. input-stream))
-       read-char-array (make-array Character/TYPE available-bytes)
-       debug (.read reader-is read-char-array 0 available-bytes)
-       request (clojure.string/join "" read-char-array)
+ (let [input-stream (.getInputStream
+                      client-socket)
+       available-bytes (.available
+                         input-stream)
+       output-stream (.getOutputStream
+                       client-socket)
+       read-byte-array (byte-array
+                         available-bytes)
+       read-int (.read
+                  input-stream
+                  read-byte-array
+                  0
+                  available-bytes)
+       request (String.
+                 read-byte-array
+                 "UTF-8")
        [header
-        body] (cstring/split request #"\r\n\r\n")
-       header-map (read-header header)
+        body] (cstring/split
+                request
+                #"\r\n\r\n")
+       header-map (read-header
+                    header)
        header-map-with-body (assoc
                               header-map
                               :body
@@ -170,13 +185,13 @@
                   routing-fn
                   header-map-with-body
                   default-response-headers)]
+  ;(println response)
   (.write
     output-stream
     (.getBytes
       response
       "UTF-8"))
-  (.close client-socket)
-  )
+  (.close client-socket))
  )
 
 (defn start-server
@@ -184,8 +199,9 @@
  [routing-fn
   & [default-response-headers
      port]]
- (open-server-socket (or port
-                         9000))
+ (open-server-socket
+   (or port
+       9000))
  (if (or (nil? @main-thread)
          (and (not (nil? @main-thread))
               (not (.isAlive @main-thread))
