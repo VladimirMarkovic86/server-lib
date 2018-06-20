@@ -4,8 +4,7 @@
            [ajax-lib.http.status-code :refer [status-code]]
            [ajax-lib.http.entity-header :as eh]
            [ajax-lib.http.response-header :as rsh])
- (:import [java.net ServerSocket]
-          [java.util Scanner]))
+ (:import [java.net ServerSocket]))
 
 (def main-thread (atom nil))
 
@@ -161,16 +160,20 @@
                          input-stream)
        output-stream (.getOutputStream
                        client-socket)
-       read-byte-array (byte-array
+       reader-is (java.io.BufferedReader.
+                   (java.io.InputStreamReader.
+                     input-stream))
+       read-char-array (make-array
+                         Character/TYPE
                          available-bytes)
        read-int (.read
-                  input-stream
-                  read-byte-array
+                  reader-is
+                  read-char-array
                   0
                   available-bytes)
-       request (String.
-                 read-byte-array
-                 "UTF-8")
+       request (clojure.string/join
+                 ""
+                 read-char-array)
        [header
         body] (cstring/split
                 request
