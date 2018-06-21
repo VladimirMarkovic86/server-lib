@@ -3,6 +3,7 @@
            [utils-lib.core :as utils]
            [ajax-lib.http.status-code :refer [status-code]]
            [ajax-lib.http.entity-header :as eh]
+           [ajax-lib.http.mime-type :as mt]
            [ajax-lib.http.response-header :as rsh])
  (:import [java.net ServerSocket]))
 
@@ -160,33 +161,71 @@
                          input-stream)
        output-stream (.getOutputStream
                        client-socket)
-       reader-is (java.io.BufferedReader.
-                   (java.io.InputStreamReader.
-                     input-stream))
-       read-char-array (make-array
-                         Character/TYPE
-                         available-bytes)
-       read-int (.read
-                  reader-is
-                  read-char-array
-                  0
-                  available-bytes)
-       request (clojure.string/join
-                 ""
-                 read-char-array)
-       [header
-        body] (cstring/split
-                request
-                #"\r\n\r\n")
+       body-separator [13 10 13 10]
+       last-four-bytes (atom [0 0 0 0])
+       header (atom [])
+       read-stream (while (not= body-separator
+                                @last-four-bytes)
+                     (let [read-byte (unchecked-byte
+                                       (.read
+                                         input-stream))]
+                       (swap!
+                         header
+                         conj
+                         read-byte)
+                       (swap!
+                         last-four-bytes
+                         utils/remove-index-from-vector
+                         0)
+                       (swap!
+                         last-four-bytes
+                         conj
+                         read-byte))
+                    )
+       remove-last-r-n (swap!
+                         header
+                         utils/remove-index-from-vector
+                         (into
+                           []
+                           (range
+                             (- (count @header)
+                                4)
+                             (count @header))
+                          ))
+       header-string (String.
+                       (byte-array
+                         @header)
+                       "UTF-8")
        header-map (read-header
-                    header)
-       header-map-with-body (assoc
-                              header-map
-                              :body
-                              body)
+                    header-string)
+       content-length (when-let [content-length (:content-length header-map)]
+                         (read-string content-length))
+       body-bytes (atom [])
+       read-stream (doseq [itr (range content-length)]
+                     (let [read-byte (unchecked-byte
+                                       (.read
+                                         input-stream))]
+                       (swap!
+                         body-bytes
+                         conj
+                         read-byte))
+                     )
+       request (if-not (empty? @body-bytes)
+                 (let [body (if (= (:content-type header-map)
+                                   (mt/text-plain))
+                              (String.
+                                (byte-array
+                                  @body-bytes)
+                                "UTF-8")
+                              @body-bytes)]
+                   (assoc
+                     header-map
+                     :body
+                     body))
+                 header-map)
        response (handler-fn
                   routing-fn
-                  header-map-with-body
+                  request
                   default-response-headers)]
   ;(println response)
   (.write
