@@ -1,17 +1,31 @@
 (ns server-lib.core
   (:require [clojure.string :as cstring]
             [utils-lib.core :as utils]
-            [ajax-lib.http.status-code :refer [status-code]]
+            [ajax-lib.http.status-code :as stc
+                                       :refer [status-code]]
             [ajax-lib.http.entity-header :as eh]
             [ajax-lib.http.mime-type :as mt]
             [ajax-lib.http.response-header :as rsh])
-  (:import [java.net ServerSocket]))
+  (:import [serverlib RejectedExecutionHandlerHTTPResponse]
+           [java.net ServerSocket]
+           [java.util.concurrent Executors]))
 
 (def main-thread
      (atom nil))
 
 (def server-socket
      (atom nil))
+
+(def running
+     (atom false))
+
+(def thread-pool-size 4)
+
+(def thread-pool
+     (atom nil))
+
+(def client-sockets
+     (atom #{}))
 
 (defn- open-server-socket
   "Open server socket on local machine"
@@ -28,19 +42,36 @@
   @server-socket)
 
 (defn stop-server
- "Stop server"
- []
- (when (and @server-socket
-            @main-thread)
-   (try
-     (.interrupt
-       @main-thread)
-     (.close
-       @server-socket)
-     (catch Exception e
-       (println (.getMessage e))
-      ))
-  )
+  "Stop server"
+  []
+  (when (and @server-socket
+             @main-thread
+             @running)
+    (try
+      (reset!
+        running
+        false)
+      (future-cancel
+        @main-thread)
+      (doseq [client-socket @client-sockets]
+        (try
+          (.close
+            client-socket)
+          (catch Exception e
+            (println (.getMessage e))
+           ))
+       )
+      (swap!
+        client-sockets
+        empty)
+      (.shutdownNow
+        @thread-pool)
+      (.close
+        @server-socket)
+      (catch Exception e
+        (println (.getMessage e))
+       ))
+   )
   (println "Server stopped"))
 
 (defn- read-header
@@ -117,47 +148,55 @@
    default-response-headers - map of default response headers defined when starting server"
   [routing-fn
    request
-   default-response-headers]
-  (let [{request-method :request-method
-         request-uri :request-uri
-         request-protocol :request-protocol} request
-         request-start-line (str
-                              request-method
-                              " "
-                              request-uri)
-         response (atom 
-                    (routing-fn
-                      request-start-line
-                      request))
-         access-control-allow-origin (get
-                                       default-response-headers
-                                       (rsh/access-control-allow-origin))
-         access-control-allow-origin (if (set? access-control-allow-origin)
-                                       (if (contains?
-                                             access-control-allow-origin
-                                             (:origin request))
-                                         (:origin request)
-                                         (first access-control-allow-origin))
-                                       (when (= access-control-allow-origin
-                                                (:origin request))
-                                         (:origin request))
-                                      )
-         default-response-headers (if access-control-allow-origin
-                                    (assoc
-                                      default-response-headers
-                                      (rsh/access-control-allow-origin)
-                                      access-control-allow-origin)
-                                    default-response-headers)]
-    (swap!
-      response
-      update-in
-      [:headers]
-      conj
-      default-response-headers)
+   default-response-headers
+   reject]
+  (if reject
     (pack-response
       request
-      @response))
- )
+      {:status (stc/not-found)
+       :headers {(eh/content-type) (mt/text-plain)}
+       :body (str {:status "Error"
+                   :message "Try again later"})})
+    (let [{request-method :request-method
+          request-uri :request-uri
+          request-protocol :request-protocol} request
+          request-start-line (str
+                               request-method
+                               " "
+                               request-uri)
+          response (atom 
+                     (routing-fn
+                       request-start-line
+                       request))
+          access-control-allow-origin (get
+                                        default-response-headers
+                                        (rsh/access-control-allow-origin))
+          access-control-allow-origin (if (set? access-control-allow-origin)
+                                        (if (contains?
+                                              access-control-allow-origin
+                                              (:origin request))
+                                          (:origin request)
+                                          (first access-control-allow-origin))
+                                        (when (= access-control-allow-origin
+                                                 (:origin request))
+                                          (:origin request))
+                                       )
+          default-response-headers (if access-control-allow-origin
+                                     (assoc
+                                       default-response-headers
+                                       (rsh/access-control-allow-origin)
+                                       access-control-allow-origin)
+                                     default-response-headers)]
+     (swap!
+       response
+       update-in
+       [:headers]
+       conj
+       default-response-headers)
+     (pack-response
+       request
+       @response))
+   ))
 
 (defn- accept-request
   "Reads input stream from client socket
@@ -166,7 +205,8 @@
    other processing"
   [routing-fn
    client-socket
-   default-response-headers]
+   default-response-headers
+   reject]
   (let [input-stream (.getInputStream
                        client-socket)
         available-bytes (.available
@@ -238,7 +278,8 @@
         response (handler-fn
                    routing-fn
                    request
-                   default-response-headers)]
+                   default-response-headers
+                   reject)]
    ;(println response)
    (.write
      output-stream
@@ -246,7 +287,38 @@
        response
        "UTF-8"))
    (.close
+     client-socket)
+   (swap!
+     client-sockets
+     disj
      client-socket))
+ )
+
+(defn- while-loop
+  "While loop of accepting and responding on clients requests"
+  [routing-fn
+   & [default-response-headers]]
+  (try
+    (while @running
+      (let [client-socket (.accept
+                            @server-socket)]
+        (swap!
+          client-sockets
+          conj
+          client-socket)
+        (.execute
+          @thread-pool
+          (fn [& [reject]]
+            (accept-request
+              routing-fn
+              client-socket
+              default-response-headers
+              reject))
+         ))
+     )
+    (catch Exception e
+      (println (.getMessage e))
+     ))
  )
 
 (defn start-server
@@ -254,35 +326,46 @@
   [routing-fn
    & [default-response-headers
       port]]
-  (open-server-socket
-    (or port
-        9000))
-  (if (or (nil? @main-thread)
-          (and (not (nil? @main-thread))
-               (not (.isAlive @main-thread))
-           ))
-    (let [while-task (fn []
-                       (try
-                         (while true
-                           (let [client-socket (.accept @server-socket)
-                                 task (fn []
-                                        (accept-request
-                                          routing-fn
-                                          client-socket
-                                          default-response-headers))]
-                             (.start
-                               (Thread. task))
-                            ))
-                         (catch Exception e
-                           (println (.getMessage e))
-                          ))
-                      )]
-      (reset!
-        main-thread
-        (Thread. while-task))
-      (.start
+  (try
+    (open-server-socket
+      (or port
+          9000))
+    (if (or (nil? @main-thread)
+            (and (not (nil? @main-thread))
+                 (future-cancelled?
+                   @main-thread)
+                 (future-done?
+                   @main-thread))
+         )
+      (do
+        (reset!
+          running
+          true)
+        (reset!
+          thread-pool
+          (java.util.concurrent.ThreadPoolExecutor.
+            thread-pool-size
+            thread-pool-size
+            thread-pool-size
+            java.util.concurrent.TimeUnit/SECONDS
+            (java.util.concurrent.ArrayBlockingQueue.
+              thread-pool-size))
+         )
+        (.setRejectedExecutionHandler
+          @thread-pool
+          (RejectedExecutionHandlerHTTPResponse.))
+        (reset!
+          main-thread
+          (future
+            (while-loop
+              routing-fn
+              default-response-headers))
+         )
+        (println "Server started")
         @main-thread)
-      (println "Server started"))
-    (println "Server already started"))
-  @main-thread)
+      (println "Server already started"))
+    (catch Exception e
+      (println (.getMessage e))
+     ))
+ )
 
