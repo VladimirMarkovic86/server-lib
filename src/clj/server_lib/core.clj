@@ -83,7 +83,8 @@
         request-start-line (get header-vector 0)
         request-start-line-vector (cstring/split
                                     request-start-line
-                                    #" ")
+                                    #" "
+                                    3)
         request-method (get request-start-line-vector 0)
         request-uri (get request-start-line-vector 1)
         request-protocol (get request-start-line-vector 2)
@@ -207,92 +208,98 @@
    client-socket
    default-response-headers
    reject]
-  (let [input-stream (.getInputStream
-                       client-socket)
-        available-bytes (.available
-                          input-stream)
-        output-stream (.getOutputStream
-                        client-socket)
-        body-separator [13 10 13 10]
-        last-four-bytes (atom [0 0 0 0])
-        header (atom [])
-        read-stream (while (not= body-separator
-                                 @last-four-bytes)
-                      (let [read-byte (unchecked-byte
-                                        (.read
-                                          input-stream))]
-                        (swap!
-                          header
-                          conj
-                          read-byte)
-                        (swap!
-                          last-four-bytes
-                          utils/remove-index-from-vector
-                          0)
-                        (swap!
-                          last-four-bytes
-                          conj
-                          read-byte))
-                     )
-        remove-last-r-n (swap!
-                          header
-                          utils/remove-index-from-vector
-                          (into
-                            []
-                            (range
-                              (- (count @header)
-                                 4)
-                              (count @header))
-                           ))
-        header-string (String.
-                        (byte-array
-                          @header)
-                        "UTF-8")
-        header-map (read-header
-                     header-string)
-        content-length (when-let [content-length (:content-length header-map)]
-                         (read-string content-length))
-        body-bytes (atom [])
-        read-stream (doseq [itr (range content-length)]
-                      (let [read-byte (unchecked-byte
-                                        (.read
-                                          input-stream))]
-                        (swap!
-                          body-bytes
-                          conj
-                          read-byte))
-                     )
-        request (if-not (empty? @body-bytes)
-                  (let [body (if (= (:content-type header-map)
-                                    (mt/text-plain))
-                               (String.
-                                 (byte-array
-                                   @body-bytes)
-                                 "UTF-8")
-                               @body-bytes)]
-                    (assoc
-                      header-map
-                      :body
-                      body))
-                  header-map)
-        response (handler-fn
-                   routing-fn
-                   request
-                   default-response-headers
-                   reject)]
-   ;(println response)
-   (.write
-     output-stream
-     (.getBytes
-       response
-       "UTF-8"))
-   (.close
-     client-socket)
-   (swap!
-     client-sockets
-     disj
-     client-socket))
- )
+  (try
+    (let [input-stream (.getInputStream
+                         client-socket)
+          output-stream (.getOutputStream
+                          client-socket)
+          body-separator [13 10 13 10]
+          last-four-bytes (atom [0 0 0 0])
+          header (atom [])
+          read-stream (while (not= body-separator
+                                   @last-four-bytes)
+                        (let [read-byte (unchecked-byte
+                                          (.read
+                                            input-stream))]
+                          (swap!
+                            header
+                            conj
+                            read-byte)
+                          (swap!
+                            last-four-bytes
+                            utils/remove-index-from-vector
+                            0)
+                          (swap!
+                            last-four-bytes
+                            conj
+                            read-byte))
+                       )
+          remove-last-r-n (swap!
+                            header
+                            utils/remove-index-from-vector
+                            (into
+                              []
+                              (range
+                                (- (count @header)
+                                   4)
+                                (count @header))
+                             ))
+          header-string (String.
+                          (byte-array
+                            @header)
+                          "UTF-8")
+          header-map (read-header
+                       header-string)
+          content-length (when-let [content-length (:content-length header-map)]
+                           (read-string content-length))
+          body-bytes (atom [])
+          read-stream (when-let [content-length content-length]
+                        (doseq [itr (range content-length)]
+                          (let [read-byte (unchecked-byte
+                                            (.read
+                                              input-stream))]
+                            (swap!
+                              body-bytes
+                              conj
+                              read-byte))
+                         ))
+          request (if-not (empty? @body-bytes)
+                    (let [body (if (= (:content-type header-map)
+                                      (mt/text-plain))
+                                 (String.
+                                   (byte-array
+                                     @body-bytes)
+                                   "UTF-8")
+                                 @body-bytes)]
+                      (println body)
+                      (assoc
+                        header-map
+                        :body
+                        body))
+                    header-map)
+          response (handler-fn
+                     routing-fn
+                     request
+                     default-response-headers
+                     reject)]
+      ;(println response)
+      (.write
+        output-stream
+        (.getBytes
+          response
+          "UTF-8"))
+     )
+    (catch Exception e
+      (println (.getMessage e))
+     )
+    (finally
+      (.close
+        client-socket)
+      (swap!
+        client-sockets
+        disj
+        client-socket))
+   ))
 
 (defn- while-loop
   "While loop of accepting and responding on clients requests"
