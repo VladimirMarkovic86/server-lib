@@ -113,6 +113,7 @@
   [request
    response-map]
   (let [response (atom "")
+        response-body (atom nil)
         status-line (str
                       (:request-protocol request)
                       " "
@@ -137,10 +138,25 @@
         str
         (eh/content-length)
         ": "
-        (count (.getBytes body "UTF-8"))
-        "\r\n\r\n"
-        body))
-    @response))
+        (count
+          (if (= (get headers (eh/content-type))
+                 (mt/text-plain))
+            (.getBytes
+              body
+              "UTF-8")
+            body))
+        "\r\n\r\n")
+      (reset!
+        response-body
+        (if (= (get headers (eh/content-type))
+               (mt/text-plain))
+          (.getBytes
+            body
+            "UTF-8")
+          body))
+     )
+    [@response
+     @response-body]))
 
 (defn- handler-fn
   "Handle request by passing request to routing-fn function
@@ -159,8 +175,8 @@
        :body (str {:status "Error"
                    :message "Try again later"})})
     (let [{request-method :request-method
-          request-uri :request-uri
-          request-protocol :request-protocol} request
+           request-uri :request-uri
+           request-protocol :request-protocol} request
           request-start-line (str
                                request-method
                                " "
@@ -277,18 +293,21 @@
                         :body
                         body))
                     header-map)
-          response (handler-fn
-                     routing-fn
-                     request
-                     default-response-headers
-                     reject)]
+          [response-header
+           response-body] (handler-fn
+                            routing-fn
+                            request
+                            default-response-headers
+                            reject)]
       ;(println response)
       (.write
         output-stream
         (.getBytes
-          response
+          response-header
           "UTF-8"))
-     )
+      (.write
+        output-stream
+        response-body))
     (catch Exception e
       (println (.getMessage e))
      )
