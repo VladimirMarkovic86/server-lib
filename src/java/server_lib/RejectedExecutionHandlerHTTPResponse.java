@@ -1,4 +1,4 @@
-package serverlib;
+package server_lib;
 
 import java.util.concurrent.RejectedExecutionHandler;
 import java.util.concurrent.ThreadPoolExecutor;

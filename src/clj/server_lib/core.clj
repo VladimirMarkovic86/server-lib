@@ -6,7 +6,7 @@
             [ajax-lib.http.entity-header :as eh]
             [ajax-lib.http.mime-type :as mt]
             [ajax-lib.http.response-header :as rsh])
-  (:import [serverlib RejectedExecutionHandlerHTTPResponse]
+  (:import [server_lib RejectedExecutionHandlerHTTPResponse]
            [java.net ServerSocket]
            [java.util.concurrent Executors]))
 
