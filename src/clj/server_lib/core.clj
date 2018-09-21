@@ -3,11 +3,17 @@
             [utils-lib.core :as utils]
             [ajax-lib.http.status-code :as stc
                                        :refer [status-code]]
+            [ajax-lib.http.general-header :as gh]
             [ajax-lib.http.entity-header :as eh]
             [ajax-lib.http.mime-type :as mt]
             [ajax-lib.http.response-header :as rsh])
   (:import [server_lib RejectedExecutionHandlerHTTPResponse]
            [java.net ServerSocket]
+           [javax.net.ssl SSLServerSocket
+                          KeyManagerFactory
+                          SSLContext]
+           [java.security KeyStore]
+           [java.io FileInputStream]
            [java.util.concurrent Executors]))
 
 (def main-thread
@@ -27,18 +33,75 @@
 (def client-sockets
      (atom #{}))
 
+(def public-dir-a
+     (atom "resources/public"))
+
 (defn- open-server-socket
   "Open server socket on local machine"
-  [port]
+  [port
+   & [{keystore-file-path :keystore-file-path
+       keystore-type :keystore-type
+       keystore-password :keystore-password
+       ssl-context :ssl-context}]]
   (when (or (nil? @server-socket)
             (and (not (nil? @server-socket))
                  (.isClosed @server-socket))
          )
-    (reset!
-      server-socket
-      (ServerSocket.
-        port))
-   )
+    (when (and keystore-file-path
+               keystore-password)
+      (try
+        (let [ks (KeyStore/getInstance
+                   (or keystore-type
+                       "JKS"))
+              ks-is (FileInputStream.
+                      keystore-file-path)
+              pass-char-array (char-array
+                                keystore-password)
+              void (.load
+                     ks
+                     ks-is
+                     pass-char-array)
+              kmf (KeyManagerFactory/getInstance
+                    (KeyManagerFactory/getDefaultAlgorithm))
+              sc (SSLContext/getInstance
+                   (or ssl-context
+                       "TLSv1.2"))
+              void (.init
+                     kmf
+                     ks
+                     pass-char-array)
+              void (.init
+                     sc
+                     (.getKeyManagers
+                       kmf)
+                     nil
+                     nil)
+              ssl-server-socket (.createServerSocket
+                                  (.getServerSocketFactory
+                                    sc)
+                                  port)]
+          (.setEnabledProtocols
+            ssl-server-socket
+            (into-array
+              ["TLSv1"
+               "TLSv1.1"
+               "TLSv1.2"
+               "SSLv3"]))
+          (reset!
+            server-socket
+            ssl-server-socket))
+        (catch Exception e
+          (println (.getMessage
+                     e))
+          ))
+     )
+    (when-not (and keystore-file-path
+                   keystore-password)
+      (reset!
+        server-socket
+        (ServerSocket.
+          port))
+     ))
   @server-socket)
 
 (defn stop-server
@@ -133,30 +196,168 @@
         (get headers map-key)
         "\r\n"))
     (when-let [body (:body response-map)]
-      (swap!
-        response
-        str
-        (eh/content-length)
-        ": "
-        (count
-          (if (= (get headers (eh/content-type))
-                 (mt/text-plain))
-            (.getBytes
-              body
-              "UTF-8")
-            body))
-        "\r\n\r\n")
-      (reset!
-        response-body
-        (if (= (get headers (eh/content-type))
-               (mt/text-plain))
-          (.getBytes
-            body
-            "UTF-8")
+      (let [body (if (= (get headers (eh/content-type))
+                        (mt/text-plain))
+                   (.getBytes
+                     body
+                     "UTF-8")
+                   body)]
+        (swap!
+          response
+          str
+          (eh/content-length)
+          ": "
+          (count
+            body)
+          "\r\n\r\n")
+        (reset!
+          response-body
           body))
      )
     [@response
      @response-body]))
+
+(defn- read-file
+  ""
+  [file-path
+   extension]
+  (try
+    (let [f (java.io.File.
+              (str
+                @public-dir-a
+                file-path))
+          ary (byte-array (.length f))
+          is (java.io.FileInputStream. f)
+          body (atom nil)
+          headers (atom nil)
+          mime-type (atom (mt/text-plain))]
+      (when (= extension
+               "css")
+        (reset!
+          mime-type
+          (mt/text-css))
+       )
+      (when (contains?
+              #{"js"
+                "map"
+                "cljs"}
+              extension)
+        (reset!
+          mime-type
+          (mt/text-javascript))
+       )
+      (when (= extension
+               "html")
+        (reset!
+          mime-type
+          (mt/text-html))
+       )
+      (.read
+        is
+        ary)
+      (.close
+        is)
+      (reset!
+        headers
+        {(eh/content-type) @mime-type})
+      (reset!
+        body
+        ary)
+      {:status (stc/ok)
+       :headers @headers
+       :body @body})
+    (catch Exception e
+      (println (.getMessage e))
+      {:status (stc/internal-server-error)
+       :headers {(eh/content-type) (mt/text-plain)}
+       :body (str {:status "error"
+                   :error-message (.getMessage e)})}
+     ))
+ )
+
+(defn- default-routing-fn
+  ""
+  [request]
+  (let [request-uri (:request-uri request)
+        request-uri (if (= request-uri
+                           "/")
+                      "/index.html"
+                      request-uri)
+        extension-start (clojure.string/last-index-of
+                          request-uri
+                          ".")
+        extension (when extension-start
+                    (.substring
+                      request-uri
+                      (inc extension-start)
+                      (count request-uri))
+                   )]
+    (when extension
+      (read-file
+        request-uri
+        extension))
+   ))
+
+(defn add-default-response-headers
+  ""
+  [request
+   response
+   default-response-headers]
+  (swap!
+    response
+    assoc-in
+    [:headers
+     (gh/connection)]
+    "keep-alive")
+  (swap!
+    response
+    assoc-in
+    [:headers
+     (gh/date)]
+    (let [sdf (java.text.SimpleDateFormat.
+                "E, dd MMM yyyy HH:mm:ss zzz")
+          date (java.util.Date.)]
+      (.setTimeZone
+        sdf
+        (java.util.TimeZone/getTimeZone
+          "GMT"))
+      (.format
+        sdf
+        date))
+   )
+  (swap!
+    response
+    assoc-in
+    [:headers
+     (rsh/server)]
+    "cljserver")
+  (when default-response-headers
+    (let [access-control-allow-origin (get
+                                        default-response-headers
+                                        (rsh/access-control-allow-origin))
+          access-control-allow-origin (if (set? access-control-allow-origin)
+                                        (if (contains?
+                                              access-control-allow-origin
+                                              (:origin request))
+                                          (:origin request)
+                                          (first access-control-allow-origin))
+                                        (when (= access-control-allow-origin
+                                                 (:origin request))
+                                          (:origin request))
+                                       )
+          default-response-headers (if access-control-allow-origin
+                                     (assoc
+                                       default-response-headers
+                                       (rsh/access-control-allow-origin)
+                                       access-control-allow-origin)
+                                     default-response-headers)]
+      (swap!
+        response
+        update-in
+        [:headers]
+        conj
+        default-response-headers))
+   ))
 
 (defn- handler-fn
   "Handle request by passing request to routing-fn function
@@ -177,38 +378,18 @@
     (let [{request-method :request-method
            request-uri :request-uri
            request-protocol :request-protocol} request
-          request-start-line (str
-                               request-method
-                               " "
-                               request-uri)
-          response (atom 
-                     (routing-fn
-                       request-start-line
-                       request))
-          access-control-allow-origin (get
-                                        default-response-headers
-                                        (rsh/access-control-allow-origin))
-          access-control-allow-origin (if (set? access-control-allow-origin)
-                                        (if (contains?
-                                              access-control-allow-origin
-                                              (:origin request))
-                                          (:origin request)
-                                          (first access-control-allow-origin))
-                                        (when (= access-control-allow-origin
-                                                 (:origin request))
-                                          (:origin request))
-                                       )
-          default-response-headers (if access-control-allow-origin
-                                     (assoc
-                                       default-response-headers
-                                       (rsh/access-control-allow-origin)
-                                       access-control-allow-origin)
-                                     default-response-headers)]
-     (swap!
+          default-response (default-routing-fn
+                             request)
+          response (if default-response
+                     (atom
+                       default-response)
+                     (atom 
+                       (routing-fn
+                         request))
+                    )]
+     (add-default-response-headers
+       request
        response
-       update-in
-       [:headers]
-       conj
        default-response-headers)
      (pack-response
        request
@@ -348,14 +529,20 @@
  )
 
 (defn start-server
-  "Starts listening on opeened server socket"
+  "Starts listening on opened server socket"
   [routing-fn
    & [default-response-headers
-      port]]
+      port
+      https-conf
+      public-dir]]
+  (reset!
+    public-dir-a
+    public-dir)
   (try
     (open-server-socket
       (or port
-          9000))
+          9000)
+      https-conf)
     (if (or (nil? @main-thread)
             (and (not (nil? @main-thread))
                  (future-cancelled?
