@@ -218,7 +218,7 @@
      @response-body]))
 
 (defn- read-file
-  ""
+  "Read file and recognize it's mime type"
   [file-path
    extension]
   (try
@@ -276,7 +276,7 @@
  )
 
 (defn- default-routing-fn
-  ""
+  "Default routing function for reading files recognized by request uri"
   [request]
   (let [request-uri (:request-uri request)
         request-uri (if (= request-uri
@@ -299,7 +299,7 @@
    ))
 
 (defn add-default-response-headers
-  ""
+  "Add default headers in every response"
   [request
    response
    default-response-headers]
@@ -535,9 +535,10 @@
       port
       https-conf
       public-dir]]
-  (reset!
-    public-dir-a
-    public-dir)
+  (when public-dir
+    (reset!
+      public-dir-a
+      public-dir))
   (try
     (open-server-socket
       (or port
