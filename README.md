@@ -1,4 +1,4 @@
-# server-lib
+# Server library
 
 Server library
 
