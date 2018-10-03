@@ -6,7 +6,8 @@
             [ajax-lib.http.general-header :as gh]
             [ajax-lib.http.entity-header :as eh]
             [ajax-lib.http.mime-type :as mt]
-            [ajax-lib.http.response-header :as rsh])
+            [ajax-lib.http.response-header :as rsh]
+            [clojure.java.io :as io])
   (:import [server_lib RejectedExecutionHandlerHTTPResponse]
            [java.net ServerSocket]
            [javax.net.ssl SSLServerSocket
@@ -34,7 +35,10 @@
      (atom #{}))
 
 (def public-dir-a
-     (atom "resources/public"))
+     (atom "public"))
+
+(def port-a
+     (atom 9000))
 
 (defn- open-server-socket
   "Open server socket on local machine"
@@ -187,17 +191,22 @@
       response
       str
       status-line)
-    (doseq [map-key (keys headers)]
+    (doseq [[m-key
+             m-val] headers]
       (swap!
         response
         str
-        map-key
+        m-key
         ": "
-        (get headers map-key)
+        m-val
         "\r\n"))
     (when-let [body (:body response-map)]
-      (let [body (if (= (get headers (eh/content-type))
-                        (mt/text-plain))
+      (let [body (if (and (= (get headers (eh/content-type))
+                             (mt/text-plain))
+                          (not
+                            (bytes?
+                              body))
+                      )
                    (.getBytes
                      body
                      "UTF-8")
@@ -222,12 +231,16 @@
   [file-path
    extension]
   (try
-    (let [f (java.io.File.
-              (str
-                @public-dir-a
-                file-path))
-          ary (byte-array (.length f))
-          is (java.io.FileInputStream. f)
+    (let [is (io/input-stream
+               (io/resource
+                 (str
+                   @public-dir-a
+                   file-path))
+              )
+          available-bytes (.available
+                            is)
+          ary (byte-array
+                available-bytes)
           body (atom nil)
           headers (atom nil)
           mime-type (atom (mt/text-plain))]
@@ -277,7 +290,8 @@
 
 (defn- default-routing-fn
   "Default routing function for reading files recognized by request uri"
-  [request]
+  [request
+   response]
   (let [request-uri (:request-uri request)
         request-uri (if (= request-uri
                            "/")
@@ -293,16 +307,24 @@
                       (count request-uri))
                    )]
     (when extension
-      (read-file
-        request-uri
-        extension))
-   ))
+      (let [response-map (read-file
+                           request-uri
+                           extension)
+            response-map (update-in
+                           response-map
+                           [:headers]
+                           conj
+                           (:headers
+                             @response))]
+        (reset!
+          response
+          response-map))
+     ))
+ )
 
-(defn add-default-response-headers
+(defn- add-default-response-headers
   "Add default headers in every response"
-  [request
-   response
-   default-response-headers]
+  [response]
   (swap!
     response
     assoc-in
@@ -330,33 +352,43 @@
     assoc-in
     [:headers
      (rsh/server)]
-    "cljserver")
+    "cljserver"))
+
+(defn- cors-check
+  "Check is access allowed"
+  [request
+   response
+   default-response-headers]
   (when default-response-headers
     (let [access-control-allow-origin (get
                                         default-response-headers
                                         (rsh/access-control-allow-origin))
           access-control-allow-origin (if (set? access-control-allow-origin)
-                                        (if (contains?
-                                              access-control-allow-origin
-                                              (:origin request))
-                                          (:origin request)
-                                          (first access-control-allow-origin))
+                                        (when (contains?
+                                                access-control-allow-origin
+                                                (:origin request))
+                                          (:origin request))
                                         (when (= access-control-allow-origin
                                                  (:origin request))
                                           (:origin request))
                                        )
-          default-response-headers (if access-control-allow-origin
-                                     (assoc
-                                       default-response-headers
-                                       (rsh/access-control-allow-origin)
-                                       access-control-allow-origin)
-                                     default-response-headers)]
-      (swap!
-        response
-        update-in
-        [:headers]
-        conj
-        default-response-headers))
+          default-response-headers (assoc
+                                     default-response-headers
+                                     (rsh/access-control-allow-origin)
+                                     access-control-allow-origin)]
+      (if access-control-allow-origin
+        (swap!
+          response
+          assoc
+          :headers
+          default-response-headers)
+        (reset!
+          response
+          {:status (stc/forbidden)
+           :headers {(eh/content-type) (mt/text-plain)}
+           :body (str {:status "Error"
+                       :message "Forbidden"})})
+       ))
    ))
 
 (defn- handler-fn
@@ -375,25 +407,35 @@
        :headers {(eh/content-type) (mt/text-plain)}
        :body (str {:status "Error"
                    :message "Try again later"})})
-    (let [{request-method :request-method
-           request-uri :request-uri
-           request-protocol :request-protocol} request
-          default-response (default-routing-fn
+    (let [response (atom nil)]
+      (cors-check
+        request
+        response
+        default-response-headers)
+      (when-not (:status
+                  @response)
+        (default-routing-fn
+          request
+          response))
+      (when-not (:status
+                  @response)
+        (let [response-map (routing-fn
                              request)
-          response (if default-response
-                     (atom
-                       default-response)
-                     (atom 
-                       (routing-fn
-                         request))
-                    )]
-     (add-default-response-headers
-       request
-       response
-       default-response-headers)
-     (pack-response
-       request
-       @response))
+              response-map (update-in
+                             response-map
+                             [:headers]
+                             conj
+                             (:headers
+                               @response))]
+          (reset!
+            response
+            response-map))
+       )
+      (add-default-response-headers
+        response)
+      (pack-response
+        request
+        @response))
    ))
 
 (defn- accept-request
@@ -539,10 +581,13 @@
     (reset!
       public-dir-a
       public-dir))
+  (when port
+    (reset!
+      port-a
+      port))
   (try
     (open-server-socket
-      (or port
-          9000)
+      @port-a
       https-conf)
     (if (or (nil? @main-thread)
             (and (not (nil? @main-thread))
