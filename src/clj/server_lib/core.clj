@@ -95,10 +95,12 @@
             server-socket
             ssl-server-socket))
         (catch Exception e
-          (println (.getMessage
-                     e))
-          ))
-     )
+          (println
+            (.getMessage
+              e))
+          #_(.printStackTrace
+            e))
+       ))
     (when-not (and keystore-file-path
                    keystore-password)
       (reset!
@@ -522,7 +524,11 @@
                             request
                             default-response-headers
                             reject)]
-      ;(println response)
+      #_(println
+        (str
+          header-string
+          "\n\n"
+          response-header))
       (.write
         output-stream
         (.getBytes
@@ -533,6 +539,8 @@
         response-body))
     (catch Exception e
       (println (.getMessage e))
+      #_(.printStackTrace
+        e)
      )
     (finally
       (.close
