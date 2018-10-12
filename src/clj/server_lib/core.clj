@@ -423,12 +423,20 @@
                   @response)
         (let [response-map (routing-fn
                              request)
-              response-map (update-in
-                             response-map
-                             [:headers]
-                             conj
-                             (:headers
-                               @response))]
+              response-map (if (:headers
+                                  response-map)
+                             (update-in
+                               response-map
+                               [:headers]
+                               conj
+                               (:headers
+                                 @response))
+                             (assoc-in
+                               response-map
+                               [:headers]
+                               (:headers
+                                 @response))
+                             )]
           (reset!
             response
             response-map))
@@ -528,7 +536,9 @@
         (str
           header-string
           "\n\n"
-          response-header))
+          response-header
+          "\n\n"
+          response-body))
       (.write
         output-stream
         (.getBytes
@@ -539,9 +549,7 @@
         response-body))
     (catch Exception e
       (println (.getMessage e))
-      #_(.printStackTrace
-        e)
-     )
+      (println e))
     (finally
       (.close
         client-socket)
