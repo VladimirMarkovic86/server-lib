@@ -25,7 +25,8 @@
 (def running
      (atom false))
 
-(def thread-pool-size 4)
+(def thread-pool-size
+     (atom 4))
 
 (def thread-pool
      (atom nil))
@@ -1216,12 +1217,12 @@
         (reset!
           thread-pool
           (java.util.concurrent.ThreadPoolExecutor.
-            thread-pool-size
-            thread-pool-size
-            thread-pool-size
+            @thread-pool-size
+            @thread-pool-size
+            @thread-pool-size
             java.util.concurrent.TimeUnit/SECONDS
             (java.util.concurrent.ArrayBlockingQueue.
-              thread-pool-size))
+              @thread-pool-size))
          )
         (.setRejectedExecutionHandler
           @thread-pool
