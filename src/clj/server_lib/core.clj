@@ -371,37 +371,76 @@
   [request
    response
    default-response-headers]
-  (when default-response-headers
-    (let [access-control-allow-origin (get
-                                        default-response-headers
-                                        (rsh/access-control-allow-origin))
-          access-control-allow-origin (if (set? access-control-allow-origin)
-                                        (when (contains?
-                                                access-control-allow-origin
-                                                (:origin request))
-                                          (:origin request))
-                                        (when (= access-control-allow-origin
-                                                 (:origin request))
-                                          (:origin request))
-                                       )
-          default-response-headers (assoc
-                                     default-response-headers
-                                     (rsh/access-control-allow-origin)
-                                     access-control-allow-origin)]
-      (if access-control-allow-origin
-        (swap!
-          response
-          assoc
-          :headers
-          default-response-headers)
-        (reset!
-          response
-          {:status (stc/forbidden)
-           :headers {(eh/content-type) (mt/text-plain)}
-           :body (str {:status "Error"
-                       :message "Forbidden"})})
-       ))
-   ))
+  (if (:origin request)
+    (if default-response-headers
+      (let [access-control-allow-origin (get
+                                          default-response-headers
+                                          (rsh/access-control-allow-origin))
+            access-control-allow-origin (if (set? access-control-allow-origin)
+                                          (when (contains?
+                                                  access-control-allow-origin
+                                                  (:origin request))
+                                            (:origin request))
+                                          (when (= access-control-allow-origin
+                                                   (:origin request))
+                                            (:origin request))
+                                         )
+            default-response-headers (assoc
+                                       default-response-headers
+                                       (rsh/access-control-allow-origin)
+                                       access-control-allow-origin)]
+        (if access-control-allow-origin
+          (swap!
+            response
+            assoc
+            :headers
+            default-response-headers)
+          (reset!
+            response
+            {:status (stc/forbidden)
+             :headers {(eh/content-type) (mt/text-plain)}
+             :body (str {:status "Error"
+                         :message "Forbidden"})})
+         ))
+      (reset!
+        response
+        {:status (stc/forbidden)
+         :headers {(eh/content-type) (mt/text-plain)}
+         :body (str {:status "Error"
+                     :message "Forbidden"})})
+     )
+    (when default-response-headers
+      (let [access-control-allow-origin (get
+                                          default-response-headers
+                                          (rsh/access-control-allow-origin))
+            https-host-origin (str
+                                "https://"
+                                (:host request))
+            http-host-origin (str
+                               "http://"
+                               (:host request))
+            same-origin (if (set? access-control-allow-origin)
+                          (or (contains?
+                                access-control-allow-origin
+                                https-host-origin)
+                              (contains?
+                                access-control-allow-origin
+                                http-host-origin))
+                          (or (= access-control-allow-origin
+                                 https-host-origin)
+                              (= access-control-allow-origin
+                                 http-host-origin))
+                         )]
+        (when-not same-origin
+          (reset!
+            response
+            {:status (stc/forbidden)
+             :headers {(eh/content-type) (mt/text-plain)}
+             :body (str {:status "Error"
+                         :message "Forbidden"})})
+         ))
+     ))
+ )
 
 (defn decode-message
   "Decode message sent through websocket
