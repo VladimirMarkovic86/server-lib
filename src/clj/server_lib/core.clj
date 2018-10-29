@@ -1095,8 +1095,11 @@
           body-separator [13 10 13 10]
           last-four-bytes (atom [0 0 0 0])
           header (atom [])
-          read-stream (while (not= body-separator
-                                   @last-four-bytes)
+          counter (atom 30)
+          read-stream (while (and (not= body-separator
+                                        @last-four-bytes)
+                                  (not= @last-four-bytes
+                                        [-1 -1 -1 -1]))
                         (let [read-byte (unchecked-byte
                                           (.read
                                             input-stream))]
@@ -1112,77 +1115,80 @@
                             last-four-bytes
                             conj
                             read-byte))
-                       )
-          remove-last-r-n (swap!
-                            header
-                            utils/remove-index-from-vector
-                            (into
-                              []
-                              (range
-                                (- (count @header)
-                                   4)
-                                (count @header))
+                       )]
+      (when-not (= @last-four-bytes
+                   [-1 -1 -1 -1])
+        (let [remove-last-r-n (swap!
+                                header
+                                utils/remove-index-from-vector
+                                (into
+                                  []
+                                  (range
+                                    (- (count @header)
+                                       4)
+                                    (count @header))
+                                 ))
+              header-string (String.
+                              (byte-array
+                                @header)
+                              "UTF-8")
+              header-map (read-header
+                           header-string)
+              content-length (when-let [content-length (:content-length header-map)]
+                               (read-string content-length))
+              body-bytes (atom [])
+              read-stream (when-let [content-length content-length]
+                            (doseq [itr (range content-length)]
+                              (let [read-byte (unchecked-byte
+                                                (.read
+                                                  input-stream))]
+                                (swap!
+                                  body-bytes
+                                  conj
+                                  read-byte))
                              ))
-          header-string (String.
-                          (byte-array
-                            @header)
-                          "UTF-8")
-          header-map (read-header
-                       header-string)
-          content-length (when-let [content-length (:content-length header-map)]
-                           (read-string content-length))
-          body-bytes (atom [])
-          read-stream (when-let [content-length content-length]
-                        (doseq [itr (range content-length)]
-                          (let [read-byte (unchecked-byte
-                                            (.read
-                                              input-stream))]
-                            (swap!
-                              body-bytes
-                              conj
-                              read-byte))
-                         ))
-          request (if-not (empty? @body-bytes)
-                    (let [body (if (= (:content-type header-map)
-                                      (mt/text-plain))
-                                 (String.
-                                   (byte-array
-                                     @body-bytes)
-                                   "UTF-8")
-                                 @body-bytes)]
-                      ;(println body)
-                      (assoc
-                        header-map
-                        :body
-                        body))
-                    header-map)
-          [response-header
-           response-body] (handler-fn
-                            routing-fn
-                            request
-                            default-response-headers
-                            reject)]
-      #_(println
-        (str
-          header-string
-          "\n\n"
-          response-header
-          "\n\n"
-          response-body))
-      (.write
-        output-stream
-        (.getBytes
-          response-header
-          "UTF-8"))
-      (.write
-        output-stream
-        response-body)
-      (when (= (:upgrade request)
-               "websocket")
-        (accept-web-socket-request-subprocess
-          routing-fn
-          client-socket
-          request))
+              request (if-not (empty? @body-bytes)
+                        (let [body (if (= (:content-type header-map)
+                                          (mt/text-plain))
+                                     (String.
+                                       (byte-array
+                                         @body-bytes)
+                                       "UTF-8")
+                                     @body-bytes)]
+                          ;(println body)
+                          (assoc
+                            header-map
+                            :body
+                            body))
+                        header-map)
+              [response-header
+               response-body] (handler-fn
+                                routing-fn
+                                request
+                                default-response-headers
+                                reject)]
+          #_(println
+            (str
+              header-string
+              "\n\n"
+              response-header
+              "\n\n"
+              response-body))
+          (.write
+            output-stream
+            (.getBytes
+              response-header
+              "UTF-8"))
+          (.write
+            output-stream
+            response-body)
+          (when (= (:upgrade request)
+                   "websocket")
+            (accept-web-socket-request-subprocess
+              routing-fn
+              client-socket
+              request))
+         ))
      )
     (catch Exception e
       (println (.getMessage e))
