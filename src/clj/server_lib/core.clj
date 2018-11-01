@@ -348,17 +348,7 @@
     assoc-in
     [:headers
      (gh/date)]
-    (let [sdf (java.text.SimpleDateFormat.
-                "E, dd MMM yyyy HH:mm:ss zzz")
-          date (java.util.Date.)]
-      (.setTimeZone
-        sdf
-        (java.util.TimeZone/getTimeZone
-          "GMT"))
-      (.format
-        sdf
-        date))
-   )
+    (utils/current-date))
   (swap!
     response
     assoc-in
