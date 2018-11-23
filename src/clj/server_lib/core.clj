@@ -205,13 +205,25 @@
       status-line)
     (doseq [[m-key
              m-val] headers]
-      (swap!
-        response
-        str
-        m-key
-        ": "
-        m-val
-        "\r\n"))
+      (if (vector?
+            m-val)
+        (doseq [mv m-val]
+          (swap!
+            response
+            str
+            m-key
+            ": "
+            mv
+            "\r\n"))
+        (swap!
+          response
+          str
+          m-key
+          ": "
+          m-val
+          "\r\n")
+        
+       ))
     (when-let [body (:body response-map)]
       (let [body (if (and (= (get headers (eh/content-type))
                              (mt/text-plain))
