@@ -221,9 +221,8 @@
           m-key
           ": "
           m-val
-          "\r\n")
-        
-       ))
+          "\r\n"))
+     )
     (when-let [body (:body response-map)]
       (let [body (if (and (= (get headers (eh/content-type))
                              (mt/text-plain))
