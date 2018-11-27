@@ -7,13 +7,15 @@
             [ajax-lib.http.entity-header :as eh]
             [ajax-lib.http.mime-type :as mt]
             [ajax-lib.http.response-header :as rsh]
+            [ajax-lib.http.request-header :as rh]
             [clojure.java.io :as io])
   (:import [server_lib RejectedExecutionHandlerHTTPResponse]
            [java.net ServerSocket]
            [javax.net.ssl SSLServerSocket
                           KeyManagerFactory
                           SSLContext]
-           [java.security KeyStore]
+           [java.security KeyStore
+                          MessageDigest]
            [java.util.concurrent Executors]))
 
 (def main-thread
@@ -40,7 +42,11 @@
 (def port-a
      (atom 9000))
 
-(def keep-alive-message-period 25)
+(def keep-alive-message-period
+     25)
+
+(def cached-files
+     (atom #{}))
 
 (defn pow
   "Square of value"
@@ -249,61 +255,139 @@
     [@response
      @response-body]))
 
+(defn md5-checksum-fn
+  "Generate checksum of read file"
+  [ary]
+  (let [byte-array-v (byte-array
+                       (count
+                         ary))
+        bytes-count (atom 0)
+        digest (MessageDigest/getInstance
+                 "MD5")]
+    (doseq [ary-byte ary]
+      (.update
+        digest
+        byte-array-v
+        0
+        @bytes-count)
+      (swap!
+        bytes-count
+        inc))
+    (let [hashed-bytes (.digest
+                         digest)
+          sb (atom "")]
+      (doseq [hashed-byte hashed-bytes]
+        (swap!
+          sb
+          str
+          (.substring
+            (Integer/toString
+              (+ (bit-and
+                   hashed-byte
+                   0xff)
+                 0x100)
+              16)
+            1))
+       )
+      @sb))
+ )
+
 (defn- read-file
   "Read file and recognize it's mime type"
   [file-path
-   extension]
+   extension
+   request]
   (try
-    (let [is (io/input-stream
-               (io/resource
-                 (str
-                   @public-dir-a
-                   file-path))
-              )
-          available-bytes (.available
-                            is)
-          ary (byte-array
-                available-bytes)
-          body (atom nil)
-          headers (atom nil)
-          mime-type (atom (mt/text-plain))]
-      (when (= extension
-               "css")
+    (let [if-none-match (:if-none-match
+                          request)
+          cache-control (:cache-control
+                          request)
+          response-map (atom {})]
+      (if (contains?
+            @cached-files
+            if-none-match)
         (reset!
-          mime-type
-          (mt/text-css))
+          response-map
+          {:status (stc/not-modified)
+           :headers {(gh/cache-control) "max-age=86400"
+                     (rsh/etag) if-none-match}})
+        (let [is (io/input-stream
+                   (io/resource
+                     (str
+                       @public-dir-a
+                       file-path))
+                  )
+              available-bytes (.available
+                                is)
+              ary (byte-array
+                    available-bytes)
+              read-file-bytes (.read
+                                is
+                                ary)
+              is-too-big (< (Math/pow
+                              2
+                              16)
+                            (count
+                              ary))
+              close-is (.close
+                          is)
+              md5-checksum (when (and (not= cache-control
+                                            "no-cache")
+                                      (not
+                                        is-too-big))
+                             (let [generated-md5 (md5-checksum-fn
+                                                   ary)]
+                               (swap!
+                                 cached-files
+                                 conj
+                                 generated-md5)
+                               generated-md5))
+              body (atom nil)
+              headers (atom nil)
+              mime-type (atom (mt/text-plain))]
+          (when (= extension
+                   "css")
+            (reset!
+              mime-type
+              (mt/text-css))
+           )
+          (when (contains?
+                  #{"js"
+                    "map"
+                    "cljs"}
+                  extension)
+            (reset!
+              mime-type
+              (mt/text-javascript))
+           )
+          (when (= extension
+                   "html")
+            (reset!
+              mime-type
+              (mt/text-html))
+           )
+          (if md5-checksum
+            (reset!
+              headers
+              {(eh/content-type) @mime-type
+               (gh/cache-control) "max-age=86400"
+               (rsh/etag) md5-checksum})
+            (reset!
+              headers
+              {(eh/content-type) @mime-type}))
+          (reset!
+            body
+            ary)
+          (reset!
+            response-map
+            {:status (stc/ok)
+             :headers @headers
+             :body @body}))
        )
-      (when (contains?
-              #{"js"
-                "map"
-                "cljs"}
-              extension)
-        (reset!
-          mime-type
-          (mt/text-javascript))
-       )
-      (when (= extension
-               "html")
-        (reset!
-          mime-type
-          (mt/text-html))
-       )
-      (.read
-        is
-        ary)
-      (.close
-        is)
-      (reset!
-        headers
-        {(eh/content-type) @mime-type})
-      (reset!
-        body
-        ary)
-      {:status (stc/ok)
-       :headers @headers
-       :body @body})
+      @response-map)
     (catch Exception e
       (println (.getMessage e))
+      (println e)
       {:status (stc/internal-server-error)
        :headers {(eh/content-type) (mt/text-plain)}
        :body (str {:status "error"
@@ -332,7 +416,8 @@
     (when extension
       (let [response-map (read-file
                            request-uri
-                           extension)
+                           extension
+                           request)
             response-map (update-in
                            response-map
                            [:headers]
@@ -1180,9 +1265,15 @@
             (.getBytes
               response-header
               "UTF-8"))
-          (.write
-            output-stream
-            response-body)
+          (if response-body
+            (.write
+              output-stream
+              response-body)
+            (.write
+              output-stream
+              (.getBytes
+                "\r\n"
+                "UTF-8")))
           (when (= (:upgrade request)
                    "websocket")
             (accept-web-socket-request-subprocess
