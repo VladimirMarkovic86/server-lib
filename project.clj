@@ -1,4 +1,4 @@
-(defproject org.clojars.vladimirmarkovic86/server-lib "0.3.11"
+(defproject org.clojars.vladimirmarkovic86/server-lib "0.3.12"
   :description "Server library"
   :url "http://github.com/VladimirMarkovic86/server-lib"
   :license {:name "Eclipse Public License"

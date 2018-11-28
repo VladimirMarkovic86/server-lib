@@ -258,21 +258,33 @@
 (defn md5-checksum-fn
   "Generate checksum of read file"
   [ary]
-  (let [byte-array-v (byte-array
-                       (count
-                         ary))
-        bytes-count (atom 0)
+  (let [capacity (if (< (count
+                          ary)
+                        1024)
+                   (count
+                     ary)
+                   1024)
+        byte-array-v (byte-array
+                       capacity)
         digest (MessageDigest/getInstance
                  "MD5")]
-    (doseq [ary-byte ary]
-      (.update
-        digest
-        byte-array-v
-        0
-        @bytes-count)
-      (swap!
-        bytes-count
-        inc))
+    ((fn
+       [index
+        capacity]
+       (when (< index
+                capacity)
+         (.update
+           digest
+           byte-array-v
+           0
+           index)
+         (recur
+           (inc
+             index)
+           capacity))
+      )
+     0
+     capacity)
     (let [hashed-bytes (.digest
                          digest)
           sb (atom "")]
@@ -324,17 +336,10 @@
               read-file-bytes (.read
                                 is
                                 ary)
-              is-too-big (< (Math/pow
-                              2
-                              16)
-                            (count
-                              ary))
               close-is (.close
                           is)
-              md5-checksum (when (and (not= cache-control
-                                            "no-cache")
-                                      (not
-                                        is-too-big))
+              md5-checksum (when (not= cache-control
+                                       "no-cache")
                              (let [generated-md5 (md5-checksum-fn
                                                    ary)]
                                (swap!
