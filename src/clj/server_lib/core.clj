@@ -114,8 +114,7 @@
           (println
             (.getMessage
               e))
-          #_(.printStackTrace
-            e))
+          #_(println e))
        ))
     (when-not (and keystore-file-path
                    keystore-password)
@@ -304,6 +303,37 @@
       @sb))
  )
 
+(defn get-ranges
+  "Returns ranges from request header"
+  [request]
+  (if-let [range-request (:range request)]
+    (let [ranges-request (.substring
+                           range-request
+                           6)
+          ranges-request (cstring/split
+                           ranges-request
+                           #",")
+          first-range (first
+                        ranges-request)
+          [start-pos
+           end-pos] (cstring/split
+                      first-range
+                      #"-")
+          start-pos-int (if-not (nil?
+                                  start-pos)
+                          (read-string
+                            start-pos)
+                          -1)
+          end-pos-int (if-not (nil?
+                                end-pos)
+                        (read-string
+                          end-pos)
+                        -1)]
+      [start-pos-int
+       end-pos-int])
+    [-1
+     -1]))
+
 (defn- read-file
   "Read file and recognize it's mime type"
   [file-path
@@ -314,7 +344,9 @@
                           request)
           cache-control (:cache-control
                           request)
-          response-map (atom {})]
+          response-map (atom {})
+          status-a (atom
+                     (stc/ok))]
       (if (contains?
             @cached-files
             if-none-match)
@@ -329,10 +361,26 @@
                        @public-dir-a
                        file-path))
                   )
+              [start-pos
+               end-pos] (get-ranges
+                          request)
               available-bytes (.available
                                 is)
+              start-byte-position (if (not= start-pos
+                                            -1)
+                                    start-pos
+                                    0)
+              end-byte-position (if (not= end-pos
+                                          -1)
+                                  end-pos
+                                  available-bytes)
+              bytes-length (- end-byte-position
+                              start-byte-position)
               ary (byte-array
-                    available-bytes)
+                    bytes-length)
+              skipped-bytes (.skip
+                              is
+                              start-byte-position)
               read-file-bytes (.read
                                 is
                                 ary)
@@ -371,6 +419,12 @@
               mime-type
               (mt/text-html))
            )
+          (when (= extension
+                   "mp4")
+            (reset!
+              mime-type
+              "video/mp4")
+           )
           (if md5-checksum
             (reset!
               headers
@@ -383,9 +437,26 @@
           (reset!
             body
             ary)
+          (when (not= start-byte-position
+                      0)
+            (reset!
+              status-a
+              (stc/partial-content))
+            (swap!
+              headers
+              assoc
+              eh/content-range
+              (str
+                "bytes "
+                start-byte-position
+                "-"
+                end-byte-position
+                "/"
+                available-bytes))
+           )
           (reset!
             response-map
-            {:status (stc/ok)
+            {:status @status-a
              :headers @headers
              :body @body}))
        )
@@ -455,7 +526,13 @@
     assoc-in
     [:headers
      (rsh/server)]
-    "cljserver"))
+    "cljserver")
+  (swap!
+    response
+    assoc-in
+    [:headers
+     (rsh/accept-ranges)]
+    "bytes"))
 
 (defn- cors-check
   "Check is access allowed"
@@ -1112,6 +1189,8 @@
         (let [decoded-message (read-till-fin-is-one
                                 input-stream
                                 user-agent)
+              decoded-message-length (count
+                                       decoded-message)
               {request-method :request-method} header-map-with-body
               header-map-with-body (assoc
                                      header-map-with-body
@@ -1119,49 +1198,71 @@
                                      (str
                                        "ws "
                                        request-method))]
-          (routing-fn
-            (assoc
-              header-map-with-body
-              :websocket
-               {:websocket-message decoded-message
-                :websocket-message-length (count decoded-message)
-                :websocket-output-fn (fn [server-message
-                                          & [first-byte]]
-                                       (try
-                                         (.write
-                                           output-stream
-                                           (encode-message
-                                             server-message
-                                             first-byte
-                                             user-agent))
-                                         (.flush
-                                           output-stream)
-                                         (reset!
-                                           keep-alive-time-in-seconds
-                                           keep-alive-message-period)
-                                         (when (= first-byte
-                                                  -120)
-                                           (reset!
-                                             sub-running
-                                             false)
-                                           (.close
-                                             client-socket)
-                                           (swap!
-                                             client-sockets
-                                             disj
-                                             client-socket)
-                                           (reset!
-                                             keep-alive
-                                             false)
+          (if (< 0
+                 decoded-message-length)
+            (routing-fn
+              (assoc
+                header-map-with-body
+                :websocket
+                 {:websocket-message decoded-message
+                  :websocket-message-length decoded-message-length
+                  :websocket-socket client-socket
+                  :websocket-output-fn (fn [server-message
+                                            & [first-byte]]
+                                         (try
+                                           (.write
+                                             output-stream
+                                             (encode-message
+                                               server-message
+                                               first-byte
+                                               user-agent))
+                                           (.flush
+                                             output-stream)
                                            (reset!
                                              keep-alive-time-in-seconds
-                                             0)
-                                           (future-cancel
-                                             keep-alive-thread))
-                                         (catch Exception e
-                                           (println (.getMessage e))
-                                          ))
-                                       nil)})
+                                             keep-alive-message-period)
+                                           (when (= first-byte
+                                                    -120)
+                                             (reset!
+                                               sub-running
+                                               false)
+                                             (.close
+                                               client-socket)
+                                             (swap!
+                                               client-sockets
+                                               disj
+                                               client-socket)
+                                             (reset!
+                                               keep-alive
+                                               false)
+                                             (reset!
+                                               keep-alive-time-in-seconds
+                                               0)
+                                             (future-cancel
+                                               keep-alive-thread))
+                                           (catch Exception e
+                                             (println (.getMessage e))
+                                            ))
+                                        )})
+             )
+            (do
+              (reset!
+                sub-running
+                false)
+              (.close
+                client-socket)
+              (swap!
+                client-sockets
+                disj
+                client-socket)
+              (reset!
+                keep-alive
+                false)
+              (reset!
+                keep-alive-time-in-seconds
+                0)
+              (future-cancel
+                keep-alive-thread))
            ))
        ))
     (catch Exception e
