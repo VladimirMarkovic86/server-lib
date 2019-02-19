@@ -175,10 +175,41 @@
         header-vector (utils/remove-index-from-vector
                         header-vector
                         0)
+        request-get-params (cstring/split
+                             request-uri
+                             #"\?"
+                             2)
+        request-uri (get
+                      request-get-params
+                      0)
+        request-get-params (get
+                             request-get-params
+                             1)
+        request-get-params (if request-get-params
+                             (let [split-params (cstring/split
+                                                  request-get-params
+                                                  #"&")
+                                   request-get-params-map (atom {})]
+                               (doseq [split-param split-params]
+                                 (let [[key-name
+                                        key-value] (cstring/split
+                                                     split-param
+                                                     #"="
+                                                     2)]
+                                   (swap!
+                                     request-get-params-map
+                                     assoc
+                                     (keyword
+                                       key-name)
+                                     key-value))
+                                )
+                               @request-get-params-map)
+                             {})
         header-map (atom
                      {:request-method request-method
                       :request-uri request-uri
-                      :request-protocol request-protocol})]
+                      :request-protocol request-protocol
+                      :request-get-params request-get-params})]
     (doseq [header-line header-vector]
       (let [header-line-vector (cstring/split header-line #": " 2)
             key-name (cstring/lower-case (get header-line-vector 0))
@@ -334,11 +365,12 @@
     [-1
      -1]))
 
-(defn- read-file
+(defn read-file
   "Read file and recognize it's mime type"
   [file-path
    extension
-   request]
+   request
+   & [is-absolute-path]]
   (try
     (let [if-none-match (:if-none-match
                           request)
@@ -355,12 +387,16 @@
           {:status (stc/not-modified)
            :headers {(gh/cache-control) "max-age=86400"
                      (rsh/etag) if-none-match}})
-        (let [is (io/input-stream
-                   (io/resource
-                     (str
-                       @public-dir-a
+        (let [is (if is-absolute-path
+                   (java.io.FileInputStream.
+                     (java.io.File.
                        file-path))
-                  )
+                   (io/input-stream
+                     (io/resource
+                       (str
+                         @public-dir-a
+                         file-path))
+                    ))
               [start-pos
                end-pos] (get-ranges
                           request)
@@ -424,6 +460,12 @@
             (reset!
               mime-type
               "video/mp4")
+           )
+          (when (= extension
+                   "mkv")
+            (reset!
+              mime-type
+              "video/mkv")
            )
           (if md5-checksum
             (reset!
@@ -1390,7 +1432,7 @@
      )
     (catch Exception e
       (println (.getMessage e))
-      (println e))
+      #_(println e))
     (finally
       (.close
         client-socket)
