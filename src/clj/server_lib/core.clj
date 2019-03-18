@@ -55,6 +55,24 @@
     2
     value))
 
+(defn parse-body
+  "Read entity-body from request, convert from string to clojure data"
+  [request-body
+   content-type]
+  (try
+    (if (and request-body
+             (string?
+               request-body)
+             (= content-type
+                "text/clojurescript"))
+      (read-string
+        request-body)
+      request-body)
+    (catch Exception e
+      (println (.getMessage e))
+     ))
+ )
+
 (defn- open-server-socket
   "Open server socket on local machine"
   [port
@@ -260,14 +278,23 @@
           "\r\n"))
      )
     (when-let [body (:body response-map)]
-      (let [body (if (and (= (get headers (eh/content-type))
-                             (mt/text-plain))
+      (let [content-type-header (get
+                                  headers
+                                  (eh/content-type))
+            body (if (and (contains?
+                            #{(mt/text-plain)
+                              (mt/text-clojurescript)}
+                            content-type-header)
                           (not
                             (bytes?
                               body))
                       )
                    (.getBytes
-                     body
+                     (if (= content-type-header
+                            (mt/text-clojurescript))
+                       (str
+                         body)
+                       body)
                      "UTF-8")
                    body)]
         (swap!
@@ -507,11 +534,10 @@
       (println (.getMessage e))
       (println e)
       {:status (stc/internal-server-error)
-       :headers {(eh/content-type) (mt/text-plain)}
-       :body (str {:status "error"
-                   :error-message (.getMessage e)})}
-     ))
- )
+       :headers {(eh/content-type) (mt/text-clojurescript)}
+       :body {:status "error"
+              :error-message (.getMessage e)}})
+   ))
 
 (defn- default-routing-fn
   "Default routing function for reading files recognized by request uri"
@@ -608,17 +634,16 @@
           (reset!
             response
             {:status (stc/forbidden)
-             :headers {(eh/content-type) (mt/text-plain)}
-             :body (str {:status "Error"
-                         :message "Forbidden"})})
-         ))
+             :headers {(eh/content-type) (mt/text-clojurescript)}
+             :body {:status "Error"
+                    :message "Forbidden"}}))
+       )
       (reset!
         response
         {:status (stc/forbidden)
-         :headers {(eh/content-type) (mt/text-plain)}
-         :body (str {:status "Error"
-                     :message "Forbidden"})})
-     )
+         :headers {(eh/content-type) (mt/text-clojurescript)}
+         :body {:status "Error"
+                :message "Forbidden"}}))
     (when default-response-headers
       (let [access-control-allow-origin (get
                                           default-response-headers
@@ -645,12 +670,11 @@
           (reset!
             response
             {:status (stc/forbidden)
-             :headers {(eh/content-type) (mt/text-plain)}
-             :body (str {:status "Error"
-                         :message "Forbidden"})})
-         ))
-     ))
- )
+             :headers {(eh/content-type) (mt/text-clojurescript)}
+             :body {:status "Error"
+                    :message "Forbidden"}}))
+       ))
+   ))
 
 (defn decode-message
   "Decode message sent through websocket
@@ -923,9 +947,9 @@
     (pack-response
       request
       {:status (stc/not-found)
-       :headers {(eh/content-type) (mt/text-plain)}
-       :body (str {:status "Error"
-                   :message "Try again later"})})
+       :headers {(eh/content-type) (mt/text-clojurescript)}
+       :body {:status "Error"
+              :message "Try again later"}})
     (if (and (= (:upgrade request)
                 "websocket"))
       (let [sec-websocket-key (:sec-websocket-key request)
@@ -946,7 +970,7 @@
                             user-agent)]
         (pack-response
           request
-          {:status 101
+          {:status (stc/switching-protocols)
            :headers {"Connection" "Upgrade"
                      "Upgrade" "websocket"
                      "Sec-WebSocket-Accept" sec-websocket-accept}
@@ -1352,17 +1376,17 @@
                        )]
       (when-not (= @last-four-bytes
                    [-1 -1 -1 -1])
-        (let [remove-last-r-n (swap!
-                                header
-                                utils/remove-index-from-vector
-                                (into
-                                  []
-                                  (range
-                                    (- (count @header)
-                                       4)
-                                    (count @header))
-                                 ))
-              header-string (String.
+        (swap!
+          header
+          utils/remove-index-from-vector
+          (into
+            []
+            (range
+              (- (count @header)
+                 4)
+              (count @header)) 
+           ))
+        (let [header-string (String.
                               (byte-array
                                 @header)
                               "UTF-8")
@@ -1381,13 +1405,18 @@
                                   conj
                                   read-byte))
                              ))
-              request (if-not (empty? @body-bytes)
-                        (let [body (if (= (:content-type header-map)
-                                          (mt/text-plain))
-                                     (String.
-                                       (byte-array
-                                         @body-bytes)
-                                       "UTF-8")
+              request (if-not (empty?
+                                @body-bytes)
+                        (let [body (if (contains?
+                                         #{(mt/text-plain)
+                                           (mt/text-clojurescript)}
+                                         (:content-type header-map))
+                                     (parse-body
+                                       (String.
+                                         (byte-array
+                                           @body-bytes)
+                                         "UTF-8")
+                                       (:content-type header-map))
                                      @body-bytes)]
                           ;(println body)
                           (assoc
