@@ -4,7 +4,7 @@ Server library is clojure project that implements server, as listening on java S
 
 ### Installing
 
-You can use this project as dependencie in clojure projects by listing it in project.clj
+You can use this project as dependencie in clojure projects by listing it in project.clj.
 
 ```
 [org.clojars.vladimirmarkovic86/server-lib "0.3.7"]
