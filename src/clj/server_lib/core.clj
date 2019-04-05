@@ -746,6 +746,12 @@
                 mime-type
                 (mt/image-x-icon))
              )
+            (when (= extension
+                     "pdf")
+              (reset!
+                mime-type
+                (mt/application-pdf))
+             )
             (if md5-checksum
               (reset!
                 headers
