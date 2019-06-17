@@ -606,9 +606,7 @@
   "Read file and recognize it's mime type"
   [file-path
    extension
-   {range-request :range
-    if-none-match :if-none-match
-    cache-control :cache-control}
+   request
    & [is-absolute-path]]
   (if (and file-path
            (string?
@@ -618,7 +616,11 @@
                file-path))
        )
     (try
-      (let [response-map (atom {})
+      (let [{range-request :range
+             if-none-match :if-none-match
+             cache-control :cache-control
+             user-agent :user-agent} request
+            response-map (atom {})
             status-a (atom
                        (stc/ok))]
         (if (contains?
@@ -651,7 +653,17 @@
                 end-byte-position (if (not= end-pos
                                             -1)
                                     end-pos
-                                    available-bytes)
+                                    (if (cstring/index-of
+                                          user-agent
+                                          "Firefox")
+                                      available-bytes
+                                      (if (cstring/index-of
+                                            user-agent
+                                            "Chrome")
+                                        (dec
+                                          available-bytes)
+                                        available-bytes))
+                                   )
                 bytes-length (- end-byte-position
                                 start-byte-position)
                 ary (byte-array
@@ -1917,9 +1929,8 @@
           client-sockets
           disj
           client-socket))
-     )
-   )
-  )
+     ))
+ )
 
 (defn while-loop
   "While loop of accepting and responding on clients requests"
