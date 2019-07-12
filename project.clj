@@ -1,12 +1,12 @@
-(defproject org.clojars.vladimirmarkovic86/server-lib "0.3.30"
+(defproject org.clojars.vladimirmarkovic86/server-lib "0.3.31"
   :description "Server library"
   :url "http://github.com/VladimirMarkovic86/server-lib"
   :license {:name "Eclipse Public License"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
   :dependencies [[org.clojure/clojure "1.9.0"]
-                 [org.clojars.vladimirmarkovic86/utils-lib "0.4.9"]
+                 [org.clojars.vladimirmarkovic86/utils-lib "0.4.10"]
                  [org.clojars.vladimirmarkovic86/ajax-lib "0.1.11"]
-                 [org.clojars.vladimirmarkovic86/request-server-lib "0.1.5"]
+                 [org.clojars.vladimirmarkovic86/request-server-lib "0.1.6"]
                  ]
 
   :min-lein-version "2.0.0"

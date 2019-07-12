@@ -68,6 +68,7 @@
 
 (def keystore-type-set
      #{"JKS"
+       "BKS"
        "JCEKS"
        "PKCS12"
        "PKCS11"})
@@ -86,6 +87,14 @@
 
 (def utf-8
      "UTF-8")
+
+(defn is-bytes?
+  "Return true if x is a byte array"
+  {:added "1.9"}
+  [x] (if (nil? x)
+        false
+        (-> x class .getComponentType (= Byte/TYPE))
+       ))
 
 (defn pow
   "Square of value"
@@ -311,7 +320,9 @@
                                request-get-params
                                1)
           request-get-params (if request-get-params
-                               (let [split-params (cstring/split
+                               (let [request-get-params (utils/decode-ascii
+                                                          request-get-params)
+                                     split-params (cstring/split
                                                     request-get-params
                                                     #"&")
                                      request-get-params-map (atom {})]
@@ -423,7 +434,7 @@
                        @content-type-header-a)
                      (or (string?
                            body)
-                         (bytes?
+                         (is-bytes?
                            body))
                  )
             (reset!
@@ -463,7 +474,7 @@
             (reset!
               response-body
               body))
-          (when-not (bytes?
+          (when-not (is-bytes?
                       @response-body)
             (reset!
               response-body
@@ -506,10 +517,10 @@
                   ary)
               (.getBytes
                 ary)
-              (when (bytes?
+              (when (is-bytes?
                       ary)
                 ary))]
-    (when (bytes?
+    (when (is-bytes?
             ary)
       (let [capacity (if (< (count
                               ary)
@@ -708,6 +719,14 @@
               (reset!
                 mime-type
                 (mt/text-html))
+             )
+            (when (contains?
+                    #{"mp3"
+                      "m4a"}
+                    extension)
+              (reset!
+                mime-type
+                (mt/audio-mpeg))
              )
             (when (= extension
                      "mp4")
@@ -1075,7 +1094,7 @@
                               message))
                       (str
                         message)
-                      (if (bytes?
+                      (if (is-bytes?
                             message)
                         message
                         (str
@@ -1401,11 +1420,7 @@
       126 (if (and input-stream
                    (instance?
                      InputStream
-                     input-stream)
-                   (<= 2
-                       (.available
-                         input-stream))
-               )
+                     input-stream))
             (let [third-byte (* (.read
                                   input-stream)
                                 (pow 8))
@@ -1419,11 +1434,7 @@
       127 (if (and input-stream
                    (instance?
                      InputStream
-                     input-stream)
-                   (<= 8
-                       (.available
-                         input-stream))
-               )
+                     input-stream))
             (let [third-byte (* (.read
                                   input-stream)
                                 (pow 56))
@@ -1884,6 +1895,14 @@
                               :body
                               body))
                           header-map)
+                request (if (instance?
+                              SSLSocket
+                              client-socket)
+                          (assoc
+                            request
+                            :is-https-custom-header
+                            true)
+                          request)
                 [response-header
                  response-body] (handler-fn
                                   routing-fn
