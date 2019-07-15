@@ -1,4 +1,4 @@
-(defproject org.clojars.vladimirmarkovic86/server-lib "0.3.31"
+(defproject org.clojars.vladimirmarkovic86/server-lib "0.3.32"
   :description "Server library"
   :url "http://github.com/VladimirMarkovic86/server-lib"
   :license {:name "Eclipse Public License"
@@ -13,5 +13,8 @@
 
   :source-paths ["src/clj"]
   :test-paths ["test/clj"]
-  :java-source-paths ["src/java"])
+  :java-source-paths ["src/java"]
+  
+  :jar-exclusions [#"^public/"
+                   #"^certificate/"])
 
