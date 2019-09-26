@@ -37,16 +37,16 @@
      (atom false))
 
 (def core-pool-size
-     (atom 5))
+     (atom 4))
 
 (def maximum-pool-size
-     (atom 10))
+     (atom 8))
 
 (def keep-thread-alive-time-in-seconds
      60)
 
 (def array-blocking-queue-size
-     (atom 100))
+     (atom 50))
 
 (def executor
      (atom nil))
